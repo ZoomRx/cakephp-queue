@@ -16,7 +16,7 @@ return [
 		'defaultworkertimeout' => 120,
 
 		// number of retries if a job fails or times out.
-		'defaultworkerretries' => 4,
+		'defaultworkerretries' => 0,
 
 		// seconds of running time after which the worker will terminate (0 = unlimited)
 		'workermaxruntime' => 0,

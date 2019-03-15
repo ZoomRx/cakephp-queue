@@ -28,14 +28,14 @@ class QueueTask extends Shell {
 	 *
 	 * @var int
 	 */
-	public $timeout = 120;
+	public $timeout = 172800; //@Aravind - hack, to avoid task refetching in adjacent runworker if timeout occurs. Since we are cleaning up with same time, there is no possibility to refetch same task for timeout.
 
 	/**
 	 * Number of times a failed instance of this task should be restarted before giving up.
 	 *
 	 * @var int
 	 */
-	public $retries = 4;
+	public $retries = 0;
 
 	/**
 	 * @var bool
@@ -61,6 +61,17 @@ class QueueTask extends Shell {
 	 */
 	public function run($data, $id = null) {
 		return true;
+	}
+
+	/**
+	 * Cancel function.
+	 * This function is executed, when a worker is executing a task and the task has canceled by admin.
+	 *
+	 * @param int|null $referenceId The id of the batch\
+	 * @param array $data The array QueuedTasks row
+	 * @return void
+	 */
+	public function canceled($referenceId, $data) {
 	}
 
 }

@@ -1,519 +1,237 @@
 <?php
 
-namespace Queue\Model\Table;
+namespace App\Model\Table;
 
+use App\Model\Entity\QueuedTask;
 use Cake\Core\Configure;
-use Cake\I18n\Time;
-use Cake\ORM\Table;
-use Exception;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
-use RegexIterator;
+use Cake\Database\Expression\QueryExpression;
+use Cake\Filesystem\Folder;
+use Cake\Log\Log;
+use Queue\Model\Table\QueuedTasksTable as BaseQueuedTasksTable;
 
-/**
- * QueuedTask for queued tasks.
- *
- * @author MGriesbach@gmail.com
- * @license http://www.opensource.org/licenses/mit-license.php The MIT License
- * @link http://github.com/MSeven/cakephp_queue
- */
-class QueuedTasksTable extends Table {
+class QueuedTasksTable extends BaseQueuedTasksTable
+{
+    /**
+     * Get running background workers count
+     *
+     * @param string $groupType - task group type (low/high)
+     * @return int count
+     */
+    public function existingRunWorkersCount($groupType)
+    {
+        $pidFilePath = Configure::read('Queue.pidfilepath');
+        $groups = QueuedTask::GROUP_MAP;
+        $thisGroupWorkerCount = 0;
+        if (!empty($pidFilePath)) {
+            $dir = new Folder($pidFilePath);
+            $files = $dir->find('queue_' . $groupType . '_.*\.pid');
+            $pids = [];
+            foreach ($files as $file) {
+                $splits = explode('_', $file);
+                $pids[] = explode('.', $splits[2])[0];
+                $thisGroupWorkerCount++;
+            }
 
-	/**
-	 * @var array
-	 */
-	public $rateHistory = [];
+            if ($thisGroupWorkerCount >= MAX_QUEUE_RUN_WORKERS[$groupType]) {
+                // Ensure all pid are currently running
+                $runningProcess = 0;
+                foreach ($pids as $pid) {
+                    $output = [];
+                    exec("ps -p $pid", $output);
+                    if (count($output) > 1) {
+                        // Process is running
+                        $runningProcess++;
+                    } else {
+                        $file = $pidFilePath . 'queue_' . $groupType . '_' . $pid . '.pid';
+                        if (file_exists($file)) {
+                            unlink($file);
+                        }
+                    }
+                }
+                return $runningProcess;
+            } else {
+                return $thisGroupWorkerCount;
+            }
+        }
+    }
 
-	/**
-	 * @var bool
-	 */
-	public $exit = false;
+    /**
+     * Spawn a background queue plugin run worker
+     *
+     * @param string $groupType - task group type (low/high)
+     * @return void
+     */
+    public function spawnBackgroundThread($groupType)
+    {
+        $cmd = 'nohup ' . ROOT . DS . 'bin' . DS . 'cake Queue.Queue runworker -g ' . $groupType . ' > /dev/null &';
+        //$cmd = 'cd ' . ROOT . ' && bin' . DS . 'cake Queue.Queue runworker -g ' . $groupTypeToTextMap[$group] . ' 2>&1';
+        exec($cmd);
+    }
 
-	/**
-	 * @var array
-	 */
-	public $findMethods = [
-		'progress' => true,
-	];
+    /**
+     * Check worker limit and initiate runworker
+     * @param int $group - priority
+     * @return bool, true -> if starts the worker otherwise false
+     */
+    public function runWorker($group = QueuedTask::LOW_PRIORITY)
+    {
+        $groupTypeToTextMap = array_flip(QueuedTask::GROUP_MAP);
+        if (!isset($groupTypeToTextMap[$group])) {
+            $group = QueuedTask::LOW_PRIORITY;
+        }
 
-	/**
-	 * @var string|null
-	 */
-	protected $_key = null;
+        $groupType = $groupTypeToTextMap[$group];
+        $runningProcess = $this->existingRunWorkersCount($groupType);
 
-	/**
-	 * initialize Table
-	 *
-	 * @param array $config Configuration
-	 * @return void
-	 */
-	public function initialize(array $config) {
-		parent::initialize($config);
+        if ($runningProcess >= MAX_QUEUE_RUN_WORKERS[$groupType]) {
+            Log::debug('Max runworker count reached');
+            return false;
+        }
 
-		$this->addBehavior('Timestamp');
+        $this->spawnBackgroundThread($groupType);
+        
+        return true;
+    }
 
-		$this->initConfig();
-	}
+    /**
+     * Cancel a batch from the Queue list
+     * @param int $referenceId - reference Id given when we crate a job
+     * @param string $jobName|null  optional QueueTask name
+     * @return Query result
+     */
+    public function cancelTask($referenceId, $jobName = null)
+    {
+        $query = $this->query()
+           ->update()
+            ->set(['status' => QueuedTask::CANCELED])
+            ->where([
+                'reference' => $referenceId,
+                'completed IS NULL'
+            ]);
+        if ($jobName !== null) {
+            $query->andWhere(['jobtype' => $jobName]);
+        }
+        
+        return $query->execute();
+    }
 
-	/**
-	 * @return void
-	 */
-	public function initConfig() {
-		// Local config without extra config file
-		$conf = (array)Configure::read('Queue');
+    /**
+     * Cancel a batch from the Queue list
+     * @param int $referenceId - reference Id given when we crate a job
+     * @param string $jobName  QueueTask name
+     * @return Query result
+     */
+    public function deleteTask($referenceId, $jobName = null)
+    {
+        return $this->deleteAll([
+                'reference' => $referenceId,
+                'jobtype' => $jobName,
+                'fetched IS NOT NULL',
+                'completed IS NOT NULL'
+            ]);
+    }
 
-		// Fallback to Plugin config which can be overwritten via local app config.
-		Configure::load('Queue.queue');
-		$defaultConf = (array)Configure::read('Queue');
+    /**
+     * Return  statistics about jobs still in the Database.
+     *
+     * @return array|Query
+     */
+    public function getQueuedTasksStatus()
+    {
+        $query = $this->find();
 
-		$conf = array_merge($defaultConf, $conf);
+        $tasks = $query
+            ->select([
+                'reference',
+                'jobtype',
+                'task_group',
+                'canceled' => $query->func()
+                    ->sum("IF(" . QueuedTask::STATUS_READBLE_FORMAT_CONDITION['canceled'] . " , 1, 0)"),
+                'created_date' => $query->func()->min('created'),
+                'total_jobs' => $query->func()->count('*'),
+                'not_started' => $query->func()
+                    ->sum("IF(" . QueuedTask::STATUS_READBLE_FORMAT_CONDITION['not_started'] . " , 1, 0)"),
+                'in_progress' => $query->func()
+                    ->sum("IF(" . QueuedTask::STATUS_READBLE_FORMAT_CONDITION['in_progress'] . " , 1, 0)"),
+                'failed' => $query->func()
+                    ->sum("IF(" . QueuedTask::STATUS_READBLE_FORMAT_CONDITION['failed'] . " , 1, 0)"),
+                'total_completes' => $query->func()
+                    ->sum("IF(" . QueuedTask::STATUS_READBLE_FORMAT_CONDITION['completed'] . " , 1, 0)"),
+            ])
+            ->group(['reference', 'jobtype']);
+        return $tasks;
+    }
 
-		Configure::write('Queue', $conf);
-	}
+    /**
+     * Returns the number of uncompleted jobs per task_group in the Queue.
+     *
+     * @return Query object
+     */
+    public function getPendingJobsCount()
+    {
+        $query = $this->find('list', [
+            'keyField' => 'group_type',
+            'valueField' => 'Job_count'
+        ]);
+        $query
+            ->select([
+                'group_type' => 'task_group',
+                'Job_count' => $query->func()->count('*')
+            ])
+            ->where([
+                'completed IS NULL'
+            ])
+            ->group(['task_group']);
+        return $query;
+    }
 
-	/**
-	 * Add a new Job to the Queue.
-	 *
-	 * @param string $jobName   QueueTask name
-	 * @param array|null $data      any array
-	 * @param array|null $notBefore optional date which must not be preceded
-	 * @param string|null $group     Used to group similar QueuedTasks.
-	 * @param string|null $reference An optional reference string.
-	 * @return \Cake\ORM\Entity Saved job entity
-	 * @throws \Exception
-	 */
-	public function createJob($jobName, $data = null, $notBefore = null, $group = null, $reference = null) {
-		$data = [
-			'jobtype' => $jobName,
-			'data' => serialize($data),
-			'task_group' => $group,
-			'reference' => $reference,
-		];
-		if ($notBefore !== null) {
-			$data['notbefore'] = new Time($notBefore);
-		}
-		$queuedTask = $this->newEntity($data);
-		if ($queuedTask->errors()) {
-			throw new Exception('Invalid entity data');
-		}
-		return $this->save($queuedTask);
-	}
+    /**
+     * Update (success/failure) messsage
+     *
+     * @param int $id ID of the job
+     * @param array $message any array
+     * (should contain the following format ['success' => [], 'error' => [], 'warning' => []])
+     * @return query object
+     */
+    public function setMessage($id, $message)
+    {
+        $jobEntity = $this->get($id);
 
-	/**
-	 * Set exit to true on error
-	 *
-	 * @return void
-	 */
-	public function onError() {
-		$this->exit = true;
-	}
+        $jobEntity->message = json_encode($message);
+        return $this->save($jobEntity);
+    }
 
-	/**
-	 * Returns the number of items in the Queue.
-	 * Either returns the number of ALL pending tasks, or the number of pending tasks of the passed Type
-	 *
-	 * @param string|null $type jobType to Count
-	 * @return int
-	 */
-	public function getLength($type = null) {
-		$findConf = [
-			'conditions' => [
-				'completed IS' => null,
-			],
-		];
-		if ($type !== null) {
-			$findConf['conditions']['jobtype'] = $type;
-		}
-		$data = $this->find('all', $findConf);
-		return $data->count();
-	}
-
-	/**
-	 * Return a list of all jobtypes in the Queue.
-	 *
-	 * @return array
-	 */
-	public function getTypes() {
-		$findCond = [
-			'fields' => [
-				'jobtype',
-			],
-			'group' => [
-				'jobtype',
-			],
-			'keyField' => 'jobtype',
-			'valueField' => 'jobtype',
-		];
-		return $this->find('list', $findCond);
-	}
-
-	/**
-	 * Return some statistics about finished jobs still in the Database.
-	 * TO-DO: rewrite as virtual field
-	 *
-	 * @return array
-	 */
-	public function getStats() {
-		$options = [
-			'fields' => function ($query) {
-				return [
-					'jobtype',
-					'num' => $query->func()->count('*'),
-					'alltime' => $query->func()->avg('UNIX_TIMESTAMP(completed) - UNIX_TIMESTAMP(created)'),
-					'runtime' => $query->func()->avg('UNIX_TIMESTAMP(completed) - UNIX_TIMESTAMP(fetched)'),
-					'fetchdelay' => $query->func()->avg('UNIX_TIMESTAMP(fetched) - IF(notbefore is NULL, UNIX_TIMESTAMP(created), UNIX_TIMESTAMP(notbefore))'),
-				];
-			},
-			'conditions' => [
-				'completed IS NOT' => null,
-			],
-			'group' => [
-				'jobtype',
-			],
-		];
-		return $this->find('all', $options);
-	}
-
-	/**
-	 * Look for a new job that can be processed with the current abilities and
-	 * from the specified group (or any if null).
-	 *
-	 * @param array $capabilities Available QueueWorkerTasks.
-	 * @param string|null $group Request a job from this group, (from any group if null)
-	 * @return array Taskdata.
-	 */
-	public function requestJob(array $capabilities, $group = null) {
-		$now = new Time();
-		$nowStr = $now->toDateTimeString();
-
-		$query = $this->find();
-		$findCond = [
-			'conditions' => [
-				'completed IS' => null,
-				'OR' => [],
-			],
-			'fields' => [
-				'age' => $query->newExpr()->add('IFNULL(TIMESTAMPDIFF(SECOND, "' . $nowStr . '", notbefore), 0)')
-			],
-			'order' => [
-				'age ASC',
-				'id ASC',
-			]
-		];
-
-		if ($group !== null) {
-			$findCond['conditions']['task_group'] = $group;
-		}
-
-		// generate the task specific conditions.
-		foreach ($capabilities as $task) {
-			list($plugin, $name) = pluginSplit($task['name']);
-			$timeoutAt = $now->copy();
-			$tmp = [
-				'jobtype' => $name,
-				'AND' => [
-					[
-						'OR' => [
-							'notbefore <' => $now,
-							'notbefore IS' => null,
-						],
-					],
-					[
-						'OR' => [
-							'fetched <' => $timeoutAt->subSeconds($task['timeout']),
-							'fetched IS' => null,
-						],
-					],
-				],
-				'failed <' => ($task['retries'] + 1),
-			];
-			if (array_key_exists('rate', $task) && $tmp['jobtype'] && array_key_exists($tmp['jobtype'], $this->rateHistory)) {
-				$tmp['UNIX_TIMESTAMP() >='] = $this->rateHistory[$tmp['jobtype']] + $task['rate'];
-			}
-			$findCond['conditions']['OR'][] = $tmp;
-		}
-
-		$job = $query->find('all', $findCond)
-			->autoFields(true)
-			->first();
-
-		if (!$job) {
-			return null;
-		}
-
-		if ($job->fetched) {
-			$job = $this->patchEntity($job, [
-				'failed' => $job->failed + 1,
-				'failure_message' => 'Restart after timeout'
-			]);
-
-			$this->save($job, ['fieldList' => ['id', 'failed', 'failure_message']]);
-		}
-
-		$key = $this->key();
-		$job = $this->patchEntity($job, [
-			'workerkey' => $key,
-			'fetched' => $now
-		]);
-
-		$this->save($job);
-		$this->rateHistory[$job['jobtype']] = $now->toUnixString();
-
-		return $job;
-	}
-
-	/**
-	 * QueuedTask::updateProgress()
-	 *
-	 * @param int $id ID of task
-	 * @param float $progress Value from 0 to 1
-	 * @return bool Success
-	 */
-	public function updateProgress($id, $progress) {
-		if (!$id) {
-			return false;
-		}
-		return (bool)$this->updateAll(['progress' => round($progress, 2)], ['id' => $id]);
-	}
-
-	/**
-	 * Mark a job as Completed, removing it from the queue.
-	 *
-	 * @param int $id ID of task
-	 * @return bool Success
-	 */
-	public function markJobDone($id) {
-		$fields = [
-			'completed' => date('Y-m-d H:i:s'),
-		];
-		$conditions = [
-			'id' => $id,
-		];
-		return $this->updateAll($fields, $conditions);
-	}
-
-	/**
-	 * Reset current jobs
-	 *
-	 * @return bool Success
-	 */
-	public function reset() {
-		$fields = [
-			'completed' => null,
-			'fetched' => null,
-			'progress' => 0,
-			'failed' => 0,
-			'workerkey' => null,
-			'failure_message' => null,
-		];
-		$conditions = [
-			'completed IS' => null,
-		];
-		return $this->updateAll($fields, $conditions);
-	}
-
-	/**
-	 * Mark a job as Failed, Incrementing the failed-counter and Requeueing it.
-	 *
-	 * @param int $id ID of task
-	 * @param string|null $failureMessage Optional message to append to the failure_message field.
-	 * @return bool Success
-	 */
-	public function markJobFailed($id, $failureMessage = null) {
-		$db = $this->get($id);
-		if ($failureMessage === null) {
-			$failureMessage = $db->failure_message;
-		}
-		$fields = [
-			'failed = failed + 1',
-			'failure_message' => $failureMessage,
-		];
-		$conditions = [
-			'id' => $id,
-		];
-		return $this->updateAll($fields, $conditions);
-	}
-
-	/**
-	 * Return some statistics about unfinished jobs still in the Database.
-	 *
-	 * @return array
-	 */
-	public function getPendingStats() {
-		$findCond = [
-			'fields' => [
-				'jobtype',
-				'created',
-				'status',
-				'fetched',
-				'progress',
-				'reference',
-				'failed',
-				'failure_message',
-			],
-			'conditions' => [
-				'completed IS' => null,
-			],
-		];
-		return $this->find('all', $findCond);
-	}
-
-	/**
-	 * Cleanup/Delete Completed Jobs.
-	 *
-	 * @return void
-	 */
-	public function cleanOldJobs() {
-		$this->deleteAll([
-			'completed <' => time() - Configure::read('Queue.cleanuptimeout'),
-		]);
-		if (!($pidFilePath = Configure::read('Queue.pidfilepath'))) {
-			return;
-		}
-		// Remove all old pid files left over
-		$timeout = time() - 2 * Configure::read('Queue.cleanuptimeout');
-		$Iterator = new RegexIterator(
-			new RecursiveIteratorIterator(new RecursiveDirectoryIterator($pidFilePath)),
-			'/^.+\_.+\.(pid)$/i',
-			RegexIterator::MATCH
-		);
-		foreach ($Iterator as $file) {
-			if ($file->isFile()) {
-				$file = $file->getPathname();
-				$lastModified = filemtime($file);
-				if ($timeout > $lastModified) {
-					unlink($file);
-				}
-			}
-		}
-	}
-
-	/**
-	 * QueuedTask::lastRun()
-	 *
-	 * @deprecated ?
-	 * @return array
-	 */
-	public function lastRun() {
-		$workerFileLog = LOGS . 'queue' . DS . 'runworker.txt';
-		if (file_exists($workerFileLog)) {
-			$worker = file_get_contents($workerFileLog);
-		}
-		return [
-			'worker' => isset($worker) ? $worker : '',
-			'queue' => $this->field('completed', ['completed IS NOT' => null], ['completed' => 'DESC']),
-		];
-	}
-
-	/**
-	 * QueuedTask::_findProgress()
-	 *
-	 * Custom find method, as in `find('progress', ...)`.
-	 *
-	 * @param string $state Current state
-	 * @param array $query Parameters
-	 * @param array $results Results
-	 * @return array         Query/Results based on state
-	 */
-	protected function _findProgress($state, $query = [], $results = []) {
-		if ($state === 'before') {
-			$query['fields'] = [
-				'reference',
-				'status',
-				'progress',
-				'failure_message',
-			];
-			if (isset($query['conditions']['exclude'])) {
-				$exclude = $query['conditions']['exclude'];
-				unset($query['conditions']['exclude']);
-				$exclude = trim($exclude, ',');
-				$exclude = explode(',', $exclude);
-				$query['conditions'][] = [
-					'NOT' => [
-						'reference' => $exclude,
-					],
-				];
-			}
-			if (isset($query['conditions']['task_group'])) {
-				$query['conditions'][]['task_group'] = $query['conditions']['task_group'];
-				unset($query['conditions']['task_group']);
-			}
-			return $query;
-		}
-		// state === after
-		foreach ($results as $k => $result) {
-			$results[$k] = [
-				'reference' => $result['reference'],
-				'status' => $result['status'],
-			];
-			if (!empty($result['progress'])) {
-				$results[$k]['progress'] = $result['progress'];
-			}
-			if (!empty($result['failure_message'])) {
-				$results[$k]['failure_message'] = $result['failure_message'];
-			}
-		}
-		return $results;
-	}
-
-	/**
-	 * QueuedTask::clearDoublettes()
-	 * //FIXME
-	 *
-	 * @return void
-	 */
-	public function clearDoublettes() {
-		$x = $this->_connection->query('SELECT max(id) as id FROM `' . $this->table() . '`
-	WHERE completed is NULL
-	GROUP BY data
-	HAVING COUNT(id) > 1');
-
-		$start = 0;
-		$x = array_keys($x);
-		$numX = count($x);
-		while ($start <= $numX) {
-			$this->deleteAll([
-				'id' => array_slice($x, $start, 10),
-			]);
-			//debug(array_slice($x, $start, 10));
-			$start = $start + 100;
-		}
-	}
-
-	/**
-	 * Generates a unique Identifier for the current worker thread.
-	 *
-	 * Useful to idendify the currently running processes for this thread.
-	 *
-	 * @return string Identifier
-	 */
-	public function key() {
-		if ($this->_key !== null) {
-			return $this->_key;
-		}
-		$this->_key = sha1(microtime());
-		return $this->_key;
-	}
-
-	/**
-	 * Resets worker Identifier
-	 *
-	 * @return void
-	 */
-	public function clearKey() {
-		$this->_key = null;
-	}
-
-	/**
-	 * truncate()
-	 *
-	 * @return void
-	 */
-	public function truncate() {
-		$sql = $this->schema()->truncateSql($this->_connection);
-		foreach ($sql as $snippet) {
-			$this->_connection->execute($snippet);
-		}
-	}
-
+    /**
+     * Return all jobs
+     *
+     * @return array|Query
+     */
+    public function getTasks()
+    {
+        $query = $this->find();
+        $statusText = $query->newExpr()->addCase(
+            [
+                new QueryExpression(QueuedTask::STATUS_READBLE_FORMAT_CONDITION['not_ready']),
+                new QueryExpression(QueuedTask::STATUS_READBLE_FORMAT_CONDITION['not_started']),
+                new QueryExpression(QueuedTask::STATUS_READBLE_FORMAT_CONDITION['in_progress']),
+                new QueryExpression(QueuedTask::STATUS_READBLE_FORMAT_CONDITION['failed']),
+                new QueryExpression(QueuedTask::STATUS_READBLE_FORMAT_CONDITION['completed']),
+                new QueryExpression(QueuedTask::STATUS_READBLE_FORMAT_CONDITION['canceled'])
+            ],
+            array_values(QueuedTask::STATUS_READBLE_FORMAT)
+        );
+        $tasks = $query
+            ->select([
+                'id',
+                'reference',
+                'jobtype',
+                'task_group',
+                'created',
+                'fetched',
+                'completed',
+                'status_text' => $statusText,
+                'message'
+            ]);
+        return $tasks;
+    }
 }

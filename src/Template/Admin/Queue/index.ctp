@@ -30,7 +30,7 @@ foreach ($pendingDetails as $item) {
 		echo '<li>Status: ' . $item['status'] . '</li>';
 		echo '<li>Progress: ' . $this->Number->toPercentage($item['progress']) . '</li>';
 		echo '<li>Failures: ' . $item['failed'] . '</li>';
-		echo '<li>Failure Message: ' . $item['failure_message'] . '</li>';
+		echo '<li>Failure Message: ' . $item['message'] . '</li>';
 	echo '</ul>';
 	echo '</li>';
 }

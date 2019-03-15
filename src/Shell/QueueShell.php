@@ -9,6 +9,7 @@ use Cake\Core\Plugin;
 use Cake\Filesystem\Folder;
 use Cake\I18n\Number;
 use Cake\Utility\Inflector;
+use Queue\Model\Entity\QueuedTask;
 
 declare(ticks = 1);
 
@@ -35,6 +36,11 @@ class QueueShell extends Shell {
 	 * @var bool
 	 */
 	protected $_exit;
+
+	/**
+	 * @var bool
+	 */
+	protected $_group = 'low';
 
 	/**
 	 * Overwrite shell initialize to dynamically load all Queue Related Tasks.
@@ -155,6 +161,14 @@ class QueueShell extends Shell {
 	 * @return void
 	 */
 	public function runworker() {
+		$group = QueuedTask::LOW_PRIORITY;
+		if (!empty($this->params['group'])) {
+			$param = strtolower(trim($this->params['group']));
+			if (isset(QueuedTask::GROUP_MAP[$param])) {
+				$group = QueuedTask::GROUP_MAP[$param];
+				$this->_group = $param;
+			}
+		}
 		$pidFilePath = Configure::read('Queue.pidfilepath');
 		if ($pidFilePath) {
 			if (!file_exists($pidFilePath)) {
@@ -175,7 +189,7 @@ class QueueShell extends Shell {
 			} else {
 				$pid = $this->QueuedTasks->key();
 			}
-			$pidFileName = 'queue_' . $pid . '.pid';
+			$pidFileName = 'queue_' . $this->_group . '_' . $pid . '.pid';
 			$fp = fopen($pidFilePath . $pidFileName, 'w');
 			fwrite($fp, $pid);
 			fclose($fp);
@@ -190,10 +204,7 @@ class QueueShell extends Shell {
 		$this->_exit = false;
 
 		$starttime = time();
-		$group = null;
-		if (!empty($this->params['group'])) {
-			$group = $this->params['group'];
-		}
+		
 		while (!$this->_exit) {
 			// make sure accidental overriding isnt possible
 			set_time_limit(0);
@@ -217,17 +228,23 @@ class QueueShell extends Shell {
 					if ($this->{$taskname}->autoUnserialize) {
 						$data['data'] = unserialize($data['data']);
 					}
-					$return = $this->{$taskname}->run($data['data'], $data['id']);
-					if ($return) {
+					if ($data['status'] == QueuedTask::CANCELED) {
+						$this->{$taskname}->canceled($data['reference'], $data);
 						$this->QueuedTasks->markJobDone($data['id']);
-						$this->out('Job Finished.');
-					} else {
-						$failureMessage = null;
-						if (!empty($this->{$taskname}->failureMessage)) {
-							$failureMessage = $this->{$taskname}->failureMessage;
+						$this->out('Job Canceled.');
+					} else { 
+						$return = $this->{$taskname}->run($data['data'], $data['id']);
+						if ($return) {
+							$this->QueuedTasks->markJobDone($data['id']);
+							$this->out('Job Finished.');
+						} else {
+							$failureMessage = null;
+							if (!empty($this->{$taskname}->failureMessage)) {
+								$failureMessage = $this->{$taskname}->failureMessage;
+							}
+							$this->QueuedTasks->markJobFailed($data['id'], $failureMessage);
+							$this->out('Job did not finish, requeued.');
 						}
-						$this->QueuedTasks->markJobFailed($data['id'], $failureMessage);
-						$this->out('Job did not finish, requeued.');
 					}
 				} elseif (Configure::read('Queue.exitwhennothingtodo')) {
 					$this->out('nothing to do, exiting.');
@@ -249,8 +266,8 @@ class QueueShell extends Shell {
 				$this->hr();
 			}
 		}
-		if (file_exists($pidFilePath . 'queue_' . $pid . '.pid')) {
-			unlink($pidFilePath . 'queue_' . $pid . '.pid');
+		if (!empty($pidFileName) && file_exists($pidFilePath . $pidFileName)) {
+			unlink($pidFilePath . $pidFileName);
 		}
 	}
 
@@ -484,7 +501,7 @@ class QueueShell extends Shell {
 		} else {
 			$pid = $this->QueuedTasks->key();
 		}
-		$file = $pidFilePath . 'queue_' . $pid . '.pid';
+		$file = $pidFilePath . 'queue_' . $this->_group . '_' . $pid . '.pid';
 		if (file_exists($file)) {
 			unlink($file);
 		}
