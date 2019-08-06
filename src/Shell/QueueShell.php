@@ -2,6 +2,8 @@
 
 namespace Queue\Shell;
 
+use App\Log\ZLog;
+use Cake\Log\Log;
 use Cake\Console\Shell;
 use Cake\Core\App;
 use Cake\Core\Configure;
@@ -233,7 +235,13 @@ class QueueShell extends Shell {
 						$this->QueuedTasks->markJobDone($data['id']);
 						$this->out('Job Canceled.');
 					} else { 
-						$return = $this->{$taskname}->run($data['data'], $data['id']);
+						$return = false;
+						try {
+				            $return = $this->{$taskname}->run($data['data'], $data['id']);
+				        } catch (\Exception $e) {
+				        	ZLog::error("Error in processing Queue Worker -  " . $taskname . ". " .
+				        		$e->getMessage(), ZLog::ADMIN, ZLog::HIGH, [], ['queue_task' => $taskname, 'queue_task_data' => $data]);
+				        }
 						if ($return) {
 							$this->QueuedTasks->markJobDone($data['id']);
 							$this->out('Job Finished.');
