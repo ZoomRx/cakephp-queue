@@ -2,6 +2,7 @@
 
 namespace Queue\Shell;
 
+use App\Log\Zlog;
 use Cake\Console\Shell;
 use Cake\Core\Configure;
 use Cake\Datasource\Exception\RecordNotFoundException;
@@ -178,13 +179,13 @@ TEXT;
 
 					$failureMessage = get_class($e) . ': ' . $e->getMessage();
 					//log the exception
-					$this->_logError($taskname . "\n" . $failureMessage . "\n" . $e->getTraceAsString());
+					$this->_logError($taskname . "\n" . $failureMessage . "\n" . $e->getTraceAsString(), $data);
 				} catch (Exception $e) {
 					$return = false;
 
 					$failureMessage = get_class($e) . ': ' . $e->getMessage();
 					//log the exception
-					$this->_logError($taskname . "\n" . $failureMessage . "\n" . $e->getTraceAsString());
+					$this->_logError($taskname . "\n" . $failureMessage . "\n" . $e->getTraceAsString(), $data);
 				}
 
 				if ($return) {
@@ -225,9 +226,16 @@ TEXT;
 
 	/**
 	 * @param string $message
+	 * @param mixed $data Queue data
 	 * @return void
 	 */
-	protected function _logError($message) {
+	protected function _logError($message, $data = null) {
+		if (class_exists('Zlog')) {
+			ZLog::error("Error in cakephp queue - " . $message, ZLog::ADMIN, ZLog::HIGH, [], ['queue_task_data' => $data]);
+
+			return;
+		}
+
 		Log::write('error', $message);
 	}
 
