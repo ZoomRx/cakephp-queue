@@ -18,6 +18,7 @@ class Processes extends AbstractMigration {
 		$table = $this->table('queue_processes');
 		$table
 			->addColumn('pid', 'string', ['null' => false, 'default' => null, 'length' => 30])
+			->addColumn('reference', 'string', ['length' => 255, 'null' => true, 'default' => null])
 			->addColumn('created', 'datetime', ['null' => true, 'default' => null])
 			->addColumn('modified', 'datetime', ['null' => true, 'default' => null])
 			->save();

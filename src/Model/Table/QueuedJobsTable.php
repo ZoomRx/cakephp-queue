@@ -123,6 +123,10 @@ class QueuedJobsTable extends Table {
 			'notbefore' => !empty($config['notBefore']) ? new Time($config['notBefore']) : null,
 		] + $config;
 
+		if ($zrxReference = Configure::read('Queue.zrxReference')) {
+			$queuedJob['reference'] = $zrxReference;
+		}
+
 		$queuedJob = $this->newEntity($queuedJob);
 		if ($queuedJob->getErrors()) {
 			throw new Exception('Invalid entity data');
@@ -233,34 +237,89 @@ class QueuedJobsTable extends Table {
 	 */
 	public function requestJob(array $capabilities, $group = null) {
 		$now = new Time();
+		$options = $this->getQueryCondition($capabilities, $group);
+
+		$job = $this->getConnection()->transactional(function () use ($options, $now) {
+			$job = $this->find('all', $options)
+				->enableAutoFields(true)
+				->epilog('FOR UPDATE')
+				->first();
+
+			if (!$job) {
+				return null;
+			}
+
+			$key = $this->key();
+			$job = $this->patchEntity($job, [
+				'workerkey' => $key,
+				'fetched' => $now
+			]);
+
+			return $this->saveOrFail($job);
+		});
+
+		if (!$job) {
+			return null;
+		}
+
+		$this->rateHistory[$job['job_type']] = $now->toUnixString();
+
+		return $job;
+	}
+
+	/**
+	 * Get Request Job query function
+	 *
+	 * @param array $capabilities capabilities
+	 * @param String $group Group
+	 * @return array $queryCondtion Query condition
+	 */
+	protected function getQueryCondition($capabilities, $group)
+	{
+		$zrxStrategyEnabled = Configure::read('Queue.zrxFetchingStrategyEnabled');
+
+		//base condition
+		$options = [
+			'conditions' => [
+				'completed IS' => null,
+			],
+			'order' => ['priority' => 'ASC']
+		];
+
+		if ($group !== null) {
+			$options['conditions']['job_group'] = $group;
+		}
+
+		if ($zrxStrategyEnabled) {
+			$options['conditions'][] = [
+				'fetched IS' => null,
+				'failed' => 0
+			];
+			$options['order']['id'] = 'ASC';
+			if ($zrxReference = Configure::read('Queue.zrxReference')) {
+				$options['conditions']['reference'] = $zrxReference;
+			}
+
+			return $options;
+		}
+
+		//add not-before and task timeout related conditions
+		$now = new Time();
 		$nowStr = $now->toDateTimeString();
 		$driverName = $this->_getDriverName();
 
 		$query = $this->find();
+
 		$age = $query->newExpr()->add('IFNULL(TIMESTAMPDIFF(SECOND, "' . $nowStr . '", notbefore), 0)');
 		switch ($driverName) {
 			case static::DRIVER_SQLSERVER:
 				$age = $query->newExpr()->add('ISNULL(DATEDIFF(SECOND, GETDATE(), notbefore), 0)');
 				break;
 		}
-		$options = [
-			'conditions' => [
-				'completed IS' => null,
-				'OR' => [],
-			],
-			'fields' => [
-				'age' => $age
-			],
-			'order' => [
-				'priority' => 'ASC',
-				'age' => 'ASC',
-				'id' => 'ASC',
-			]
-		];
 
-		if ($group !== null) {
-			$options['conditions']['job_group'] = $group;
-		}
+		$options['fields'] = ['age' => $age];
+		$options['order']['age'] = 'ASC';
+		$options['order']['id'] = 'ASC';
 
 		// Generate the task specific conditions.
 		foreach ($capabilities as $task) {
@@ -298,32 +357,7 @@ class QueuedJobsTable extends Table {
 			$options['conditions']['OR'][] = $tmp;
 		}
 
-		$job = $this->getConnection()->transactional(function () use ($query, $options, $now) {
-			$job = $query->find('all', $options)
-				->enableAutoFields(true)
-				->epilog('FOR UPDATE')
-				->first();
-
-			if (!$job) {
-				return null;
-			}
-
-			$key = $this->key();
-			$job = $this->patchEntity($job, [
-				'workerkey' => $key,
-				'fetched' => $now
-			]);
-
-			return $this->saveOrFail($job);
-		});
-
-		if (!$job) {
-			return null;
-		}
-
-		$this->rateHistory[$job['job_type']] = $now->toUnixString();
-
-		return $job;
+		return $options;
 	}
 
 	/**

@@ -7,6 +7,7 @@
 
 namespace Queue\Test\TestCase\Model\Table;
 
+use Cake\Core\Configure;
 use Cake\Datasource\ConnectionManager;
 use Cake\I18n\FrozenTime;
 use Cake\I18n\Time;
@@ -224,6 +225,9 @@ class QueuedJobsTableTest extends TestCase {
 	 * @return void
 	 */
 	public function testNotBeforeOrder() {
+		if (Configure::read('Queue.zrxFetchingStrategyEnabled')) {
+			$this->markTestSkipped('Skipping. disable zrx fetching strategy to pass this test');
+		}
 		$this->_needsConnection();
 
 		$capabilities = [
@@ -285,6 +289,9 @@ class QueuedJobsTableTest extends TestCase {
 	 * @return void
 	 */
 	public function testRateLimit() {
+		if (Configure::read('Queue.zrxFetchingStrategyEnabled')) {
+			$this->markTestSkipped('Skipping. disable zrx fetching strategy to pass this test');
+		}
 		$this->_needsConnection();
 
 		$capabilities = [
