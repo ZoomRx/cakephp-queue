@@ -7,17 +7,10 @@
 
 namespace Queue\Shell\Task;
 
-use Cake\ORM\TableRegistry;
-
 /**
  * A Simple QueueTask example.
  */
 class QueueSuperExampleTask extends QueueTask {
-
-	/**
-	 * @var \Queue\Model\Table\QueuedTasksTable
-	 */
-	public $QueuedTask;
 
 	/**
 	 * Timeout for run, after which the Task is reassigned to a new worker.
@@ -34,13 +27,6 @@ class QueueSuperExampleTask extends QueueTask {
 	public $retries = 1;
 
 	/**
-	 * Stores any failure messages triggered during run()
-	 *
-	 * @var string
-	 */
-	public $failureMessage = '';
-
-	/**
 	 * SuperExample add functionality.
 	 * Will create one example job in the queue, which later will be executed using run();
 	 *
@@ -55,7 +41,7 @@ class QueueSuperExampleTask extends QueueTask {
 		$this->out('This job will only produce some console output on the worker that it runs on.');
 		$this->out(' ');
 		$this->out('To run a Worker use:');
-		$this->out('	cake Queue.Queue runworker');
+		$this->out('	bin/cake queue runworker');
 		$this->out(' ');
 		$this->out('You can find the sourcecode of this task in: ');
 		$this->out(__FILE__);
@@ -63,7 +49,7 @@ class QueueSuperExampleTask extends QueueTask {
 		/*
 		 * Adding a task of type 'example' with no additionally passed data
 		 */
-		if ($this->QueuedTasks->createJob('SuperExample', null)) {
+		if ($this->QueuedJobs->createJob('SuperExample', null)) {
 			$this->out('OK, job created, now run the worker');
 		} else {
 			$this->err('Could not create Job');
@@ -75,11 +61,11 @@ class QueueSuperExampleTask extends QueueTask {
 	 * This function is executed, when a worker is executing a task.
 	 * The return parameter will determine, if the task will be marked completed, or be requeued.
 	 *
-	 * @param array $data The array passed to QueuedTask->createJob()
-	 * @param int|null $id The id of the QueuedTask
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		$this->hr();
 		$this->out('CakePHP Queue SuperExample task.');
 		$this->hr();
@@ -88,7 +74,7 @@ class QueueSuperExampleTask extends QueueTask {
 		$this->out(' ');
 
 		// Lets create an Example task on successful execution
-		TableRegistry::get('Queue.QueuedTasks')->createJob('Example');
+		$this->QueuedJobs->createJob('Example');
 
 		return true;
 	}

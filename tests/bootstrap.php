@@ -1,5 +1,10 @@
 <?php
-define('DS', DIRECTORY_SEPARATOR);
+use Cake\Datasource\ConnectionManager;
+use Cake\Routing\DispatcherFactory;
+
+if (!defined('DS')) {
+	define('DS', DIRECTORY_SEPARATOR);
+}
 if (!defined('WINDOWS')) {
 	if (DS === '\\' || substr(PHP_OS, 0, 3) === 'WIN') {
 		define('WINDOWS', true);
@@ -12,7 +17,7 @@ define('ROOT', dirname(__DIR__));
 define('TMP', ROOT . DS . 'tmp' . DS);
 define('LOGS', TMP . 'logs' . DS);
 define('CACHE', TMP . 'cache' . DS);
-define('APP', sys_get_temp_dir());
+define('APP', ROOT . DS . 'tests' . DS . 'test_app' . DS . 'src' . DS);
 define('APP_DIR', 'src');
 define('CAKE_CORE_INCLUDE_PATH', ROOT . '/vendor/cakephp/cakephp');
 define('CORE_PATH', CAKE_CORE_INCLUDE_PATH . DS);
@@ -27,9 +32,13 @@ require ROOT . '/vendor/autoload.php';
 require CORE_PATH . 'config/bootstrap.php';
 
 Cake\Core\Configure::write('App', [
-		'namespace' => 'App',
-		'encoding' => 'UTF-8',
+	'namespace' => 'App',
+	'encoding' => 'UTF-8',
+	'paths' => [
+		'templates' => [ROOT . DS . 'tests' . DS . 'test_app' . DS . 'src' . DS . 'Template' . DS],
+	]
 ]);
+
 Cake\Core\Configure::write('debug', true);
 
 Cake\Core\Configure::write('EmailTransport', [
@@ -72,42 +81,38 @@ $cache = [
 	],
 ];
 
-Cake\Cache\Cache::config($cache);
+Cake\Cache\Cache::setConfig($cache);
 
-Cake\Core\Plugin::load('Queue', ['path' => ROOT . DS]);
-Cake\Core\Plugin::load('Tools', ['path' => ROOT . DS . 'plugins' . DS . 'Tools' . DS]);
+Cake\Core\Plugin::load('Queue', ['path' => ROOT . DS, 'autoload' => true, 'bootstrap' => false, 'routes' => true]);
+Cake\Core\Plugin::load('Foo', ['path' => ROOT . DS . 'tests' . DS . 'test_app' . DS . 'plugins' . DS . 'Foo' . DS]);
+Cake\Core\Plugin::load('Tools', ['path' => ROOT . DS . 'vendor' . DS . 'dereuromark' . DS . 'cakephp-tools' . DS]);
 
-Cake\Mailer\Email::configTransport('default', [
+DispatcherFactory::add('Routing');
+DispatcherFactory::add('ControllerFactory');
+
+Cake\Mailer\Email::setConfigTransport('default', [
 	'className' => 'Debug',
 ]);
-Cake\Mailer\Email::configTransport('queue', [
+Cake\Mailer\Email::setConfigTransport('queue', [
 	'className' => 'Queue.Queue',
 ]);
-Cake\Mailer\Email::config('default', [
+Cake\Mailer\Email::setConfig('default', [
 	'transport' => 'default',
 ]);
 
-// Ensure default test connection is defined
+// Allow local overwrite
+// E.g. in your console: export db_dsn="mysql://root:secret@127.0.0.1/cake_test"
+if (!getenv('db_class') && getenv('db_dsn')) {
+	ConnectionManager::setConfig('test', ['url' => getenv('db_dsn')]);
+	return;
+}
 if (!getenv('db_class')) {
 	putenv('db_class=Cake\Database\Driver\Sqlite');
 	putenv('db_dsn=sqlite::memory:');
 }
 
-if (WINDOWS) {
-	Cake\Datasource\ConnectionManager::config('test', [
-		'className' => 'Cake\Database\Connection',
-		'driver' => 'Cake\Database\Driver\Mysql',
-		'database' => 'cake_test',
-		'username' => 'root',
-		'password' => '',
-		'timezone' => 'UTC',
-		'quoteIdentifiers' => true,
-		'cacheMetadata' => true,
-	]);
-	return;
-}
-
-Cake\Datasource\ConnectionManager::config('test', [
+// Uses Travis config then (MySQL, Postgres, ...)
+ConnectionManager::setConfig('test', [
 	'className' => 'Cake\Database\Connection',
 	'driver' => getenv('db_class'),
 	'dsn' => getenv('db_dsn'),
@@ -117,4 +122,5 @@ Cake\Datasource\ConnectionManager::config('test', [
 	'timezone' => 'UTC',
 	'quoteIdentifiers' => true,
 	'cacheMetadata' => true,
+
 ]);

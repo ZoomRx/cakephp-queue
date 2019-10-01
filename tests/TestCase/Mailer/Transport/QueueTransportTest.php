@@ -12,13 +12,6 @@ use Queue\Mailer\Transport\QueueTransport;
 class QueueTransportTest extends TestCase {
 
 	/**
-	 * @var array
-	 */
-	public $fixtures = [
-		'plugin.Queue.QueuedTasks',
-	];
-
-	/**
 	 * @var \Queue\Mailer\Transport\QueueTransport
 	 */
 	protected $QueueTransport;
@@ -31,21 +24,6 @@ class QueueTransportTest extends TestCase {
 	public function setUp() {
 		parent::setUp();
 		$this->QueueTransport = new QueueTransport();
-	}
-
-	/**
-	 * Test configuration
-	 *
-	 * @return void
-	 */
-	public function testConfig() {
-		$Email = new Email();
-		$Email->transport('queue');
-		$Email->config('default');
-
-		$res = $Email->transport()->config();
-		//debug($res);
-		//$this->assertTrue(isset($res['queue']));
 	}
 
 	/**
@@ -65,12 +43,11 @@ class QueueTransportTest extends TestCase {
 		$this->QueueTransport->config($config);
 
 		$result = $this->QueueTransport->send($Email);
-		$this->assertEquals('Email', $result['jobtype']);
+		$this->assertEquals('Email', $result['job_type']);
 		$this->assertTrue(strlen($result['data']) < 10000);
 
 		$output = unserialize($result['data']);
-		//debug($output);
-		//$this->assertEquals($Email, $output['settings']);
+		//$this->assertEquals('Testing Message', $output['settings']['_subject']);
 	}
 
 }

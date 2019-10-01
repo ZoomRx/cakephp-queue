@@ -6,6 +6,7 @@
 
 namespace Queue\Shell\Task;
 
+use Cake\Console\ConsoleIo;
 use Cake\Console\Shell;
 
 /**
@@ -17,11 +18,14 @@ use Cake\Console\Shell;
 class QueueTask extends Shell {
 
 	/**
-	 * Adding the QueueTask Model
-	 *
 	 * @var string
 	 */
-	public $modelClass = 'Queue.QueuedTasks';
+	public $queueModelClass = 'Queue.QueuedJobs';
+
+	/**
+	 * @var \Queue\Model\Table\QueuedJobsTable
+	 */
+	public $QueuedJobs;
 
 	/**
 	 * Timeout for run, after which the Task is reassigned to a new worker.
@@ -38,9 +42,22 @@ class QueueTask extends Shell {
 	public $retries = 0;
 
 	/**
-	 * @var bool
+	 * Stores any failure messages triggered during run()
+	 *
+	 * @deprecated Use Exception throwing with a clear message instead.
+	 *
+	 * @var string|null
 	 */
-	public $autoUnserialize = true;
+	public $failureMessage = null;
+
+	/**
+	 * @param \Cake\Console\ConsoleIo|null $io IO
+	 */
+	public function __construct(ConsoleIo $io = null) {
+		parent::__construct($io);
+
+		$this->loadModel($this->queueModelClass);
+	}
 
 	/**
 	 * Add functionality.
@@ -51,15 +68,16 @@ class QueueTask extends Shell {
 	}
 
 	/**
-	 * Run function.
-	 * This function is executed, when a worker is executing a task.
-	 * The return parameter will determine, if the task will be marked completed, or be requeued.
+	 * Run functionality.
 	 *
-	 * @param array $data The array passed to QueuedTask->createJob()
-	 * @param int|null $id The id of the QueuedTask
+	 * This function is executed, when a worker is executing a task.
+	 * The return parameter will determine if the task will be marked completed, or be re-queued.
+	 *
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		return true;
 	}
 

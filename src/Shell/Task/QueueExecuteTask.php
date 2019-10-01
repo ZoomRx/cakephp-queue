@@ -13,11 +13,6 @@ namespace Queue\Shell\Task;
 class QueueExecuteTask extends QueueTask {
 
 	/**
-	 * @var \Queue\Model\Table\QueuedTasksTable
-	 */
-	public $QueuedTask;
-
-	/**
 	 * Timeout for run, after which the Task is reassigned to a new worker.
 	 *
 	 * @var int
@@ -30,13 +25,6 @@ class QueueExecuteTask extends QueueTask {
 	 * @var int
 	 */
 	public $retries = 1;
-
-	/**
-	 * Stores any failure messages triggered during run()
-	 *
-	 * @var string
-	 */
-	public $failureMessage = '';
 
 	/**
 	 * Add functionality.
@@ -60,7 +48,7 @@ class QueueExecuteTask extends QueueTask {
 				'command' => $this->args[1],
 				'params' => array_slice($this->args, 2),
 			];
-			if ($this->QueuedTasks->createJob('Execute', $data)) {
+			if ($this->QueuedJobs->createJob('Execute', $data)) {
 				$this->out('Job created');
 			} else {
 				$this->err('Could not create Job');
@@ -74,11 +62,11 @@ class QueueExecuteTask extends QueueTask {
 	 * This function is executed, when a worker is executing a task.
 	 * The return parameter will determine, if the task will be marked completed, or be requeued.
 	 *
-	 * @param array $data The array passed to QueuedTask->createJob()
-	 * @param int|null $id The id of the QueuedTask
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		$command = escapeshellcmd($data['command']);
 		if (!empty($data['params'])) {
 			$command .= ' ' . implode(' ', $data['params']);

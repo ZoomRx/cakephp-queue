@@ -13,11 +13,6 @@ namespace Queue\Shell\Task;
 class QueueExampleTask extends QueueTask {
 
 	/**
-	 * @var \Queue\Model\Table\QueuedTasksTable
-	 */
-	public $QueuedTask;
-
-	/**
 	 * Timeout for run, after which the Task is reassigned to a new worker.
 	 *
 	 * @var int
@@ -30,13 +25,6 @@ class QueueExampleTask extends QueueTask {
 	 * @var int
 	 */
 	public $retries = 1;
-
-	/**
-	 * Stores any failure messages triggered during run()
-	 *
-	 * @var string
-	 */
-	public $failureMessage = '';
 
 	/**
 	 * Example add functionality.
@@ -52,7 +40,7 @@ class QueueExampleTask extends QueueTask {
 		$this->out('This job will only produce some console output on the worker that it runs on.');
 		$this->out(' ');
 		$this->out('To run a Worker use:');
-		$this->out('	cake Queue.Queue runworker');
+		$this->out('	bin/cake queue runworker');
 		$this->out(' ');
 		$this->out('You can find the sourcecode of this task in: ');
 		$this->out(__FILE__);
@@ -60,7 +48,7 @@ class QueueExampleTask extends QueueTask {
 		/*
 		 * Adding a task of type 'example' with no additionally passed data
 		 */
-		if ($this->QueuedTasks->createJob('Example', null)) {
+		if ($this->QueuedJobs->createJob('Example', null)) {
 			$this->out('OK, job created, now run the worker');
 		} else {
 			$this->err('Could not create Job');
@@ -72,11 +60,11 @@ class QueueExampleTask extends QueueTask {
 	 * This function is executed, when a worker is executing a task.
 	 * The return parameter will determine, if the task will be marked completed, or be requeued.
 	 *
-	 * @param array $data The array passed to QueuedTask->createJob()
-	 * @param int|null $id The id of the QueuedTask
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		$this->hr();
 		$this->out('CakePHP Queue Example task.');
 		$this->hr();

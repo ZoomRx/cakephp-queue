@@ -1,10 +1,10 @@
 <?php
 
-namespace TestApp\Model\Table;
+namespace App\Model\Table;
 
-use Queue\Model\Table\QueuedTasksTable as BaseQueuedTasksTable;
+use Queue\Model\Table\QueuedJobsTable as BaseQueuedJobsTable;
 
-class QueuedTasksTable extends BaseQueuedTasksTable {
+class QueuedJobsTable extends BaseQueuedJobsTable {
 
 	/**
 	 * @var bool

@@ -15,11 +15,6 @@ use Cake\Console\ConsoleIo;
 class QueueRetryExampleTask extends QueueTask {
 
 	/**
-	 * @var \Queue\Model\Table\QueuedTasksTable
-	 */
-	public $QueuedTasks;
-
-	/**
 	 * Timeout for run, after which the Task is reassigned to a new worker.
 	 *
 	 * @var int
@@ -31,14 +26,7 @@ class QueueRetryExampleTask extends QueueTask {
 	 *
 	 * @var int
 	 */
-	public $retries = 5;
-
-	/**
-	 * Stores any failure messages triggered during run()
-	 *
-	 * @var string
-	 */
-	public $failureMessage = '';
+	public $retries = 4;
 
 	/**
 	 * Constructs this Shell instance.
@@ -65,18 +53,22 @@ class QueueRetryExampleTask extends QueueTask {
 		$this->out('This job will only produce some console output on the worker that it runs on.');
 		$this->out(' ');
 		$this->out('To run a Worker use:');
-		$this->out('	cake Queue.Queue runworker');
+		$this->out('	bin/cake queue runworker');
 		$this->out(' ');
 		$this->out('You can find the sourcecode of this task in: ');
 		$this->out(__FILE__);
 		$this->out(' ');
+
+		if (file_exists($this->file)) {
+			$this->warn('File seems to already exist. Make sure you run this task standalone. You cannot run it multiple times in parallel!');
+		}
 
 		file_put_contents($this->file, '0');
 
 		/*
 		 * Adding a task of type 'example' with no additionally passed data
 		 */
-		if ($this->QueuedTasks->createJob('RetryExample', null)) {
+		if ($this->QueuedJobs->createJob('RetryExample', null)) {
 			$this->out('OK, job created, now run the worker');
 		} else {
 			$this->err('Could not create Job');
@@ -88,17 +80,18 @@ class QueueRetryExampleTask extends QueueTask {
 	 * This function is executed, when a worker is executing a task.
 	 * The return parameter will determine, if the task will be marked completed, or be requeued.
 	 *
-	 * @param array $data The array passed to QueuedTask->createJob()
-	 * @param int|null $id The id of the QueuedTask
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		$count = (int)file_get_contents($this->file);
 
 		$this->hr();
 		$this->out('CakePHP Queue Example task.');
 		$this->hr();
 
+		// Let's fake 3 fails before it actually runs successfully
 		if ($count < 3) {
 			$count++;
 			file_put_contents($this->file, (string)$count);

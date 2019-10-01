@@ -2,17 +2,10 @@
 
 namespace Queue\Shell\Task;
 
-use RuntimeException;
-
 /**
- * A Simple QueueTask example that runs for a while.
+ * A Simple QueueTask example that runs for a while and updates the progress field.
  */
-class QueueLongExampleTask extends QueueTask {
-
-	/**
-	 * @var \Queue\Model\Entity\QueuedTask
-	 */
-	public $QueuedTask;
+class QueueProgressExampleTask extends QueueTask {
 
 	/**
 	 * Timeout for run, after which the Task is reassigned to a new worker.
@@ -29,27 +22,20 @@ class QueueLongExampleTask extends QueueTask {
 	public $retries = 1;
 
 	/**
-	 * Stores any failure messages triggered during run()
-	 *
-	 * @var string
-	 */
-	public $failureMessage = '';
-
-	/**
 	 * Example add functionality.
 	 * Will create one example job in the queue, which later will be executed using run();
 	 *
 	 * @return void
 	 */
 	public function add() {
-		$this->out('CakePHP Queue LongExample task.');
+		$this->out('CakePHP Queue ProgressExample task.');
 		$this->hr();
 		$this->out('This is a very simple but long running example of a QueueTask.');
 		$this->out('I will now add the Job into the Queue.');
 		$this->out('This job will need at least 2 minutes to complete.');
 		$this->out(' ');
 		$this->out('To run a Worker use:');
-		$this->out('	cake Queue.Queue runworker');
+		$this->out('	bin/cake queue runworker');
 		$this->out(' ');
 		$this->out('You can find the sourcecode of this task in:');
 		$this->out(__FILE__);
@@ -57,7 +43,10 @@ class QueueLongExampleTask extends QueueTask {
 		/*
 		 * Adding a task of type 'example' with no additionally passed data
 		 */
-		if ($this->QueuedTasks->createJob('LongExample', 2 * MINUTE)) {
+		$data = [
+			'duration' => 2 * MINUTE
+		];
+		if ($this->QueuedJobs->createJob('ProgressExample', $data)) {
 			$this->out('OK, job created, now run the worker');
 		} else {
 			$this->err('Could not create Job');
@@ -69,25 +58,26 @@ class QueueLongExampleTask extends QueueTask {
 	 * This function is executed, when a worker is executing a task.
 	 * The return parameter will determine, if the task will be marked completed, or be requeued.
 	 *
-	 * @param array $data The array passed to QueuedTask->createJob()
-	 * @param int|null $id The id of the QueuedTask
+	 * Defaults to 120 seconds
+	 *
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
-	 * @throws \RuntimeException when seconds are 0;
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		$this->hr();
-		$this->out('CakePHP Queue LongExample task.');
-		$seconds = (int)$data;
-		if (!$seconds) {
-			throw new RuntimeException('Seconds need to be > 0');
-		}
+		$this->out('CakePHP Queue ProgressExample task.');
+		$seconds = !empty($data['duration']) ? (int)$data['duration'] : 2 * MINUTE;
+
 		$this->out('A total of ' . $seconds . ' seconds need to pass...');
 		for ($i = 0; $i < $seconds; $i++) {
 			sleep(1);
-			$this->QueuedTasks->updateProgress($id, ($i + 1) / $seconds);
+			$this->QueuedJobs->updateProgress($jobId, ($i + 1) / $seconds);
 		}
+		$this->QueuedJobs->updateProgress($jobId, 1);
+
 		$this->hr();
-		$this->out(' ->Success, the LongExample Job was run.<-');
+		$this->out(' ->Success, the ProgressExample Job was run.<-');
 		$this->out(' ');
 		$this->out(' ');
 		return true;

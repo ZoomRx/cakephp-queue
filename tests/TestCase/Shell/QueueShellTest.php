@@ -2,17 +2,29 @@
 
 namespace Queue\Test\TestCase\Shell;
 
-use Cake\Console\Shell;
+use Cake\Console\ConsoleIo;
 use Cake\Core\Configure;
+use Cake\Datasource\ConnectionManager;
 use Cake\TestSuite\TestCase;
 use Queue\Shell\QueueShell;
+use Tools\TestSuite\ConsoleOutput;
 
 class QueueShellTest extends TestCase {
 
 	/**
-	 * @var \Queue\Shell\QueueShell
+	 * @var \Queue\Shell\QueueShell|\PHPUnit_Framework_MockObject_MockObject
 	 */
 	public $QueueShell;
+
+	/**
+	 * @var \Tools\TestSuite\ConsoleOutput
+	 */
+	public $out;
+
+	/**
+	 * @var \Tools\TestSuite\ConsoleOutput
+	 */
+	public $err;
 
 	/**
 	 * Fixtures to load
@@ -20,7 +32,8 @@ class QueueShellTest extends TestCase {
 	 * @var array
 	 */
 	public $fixtures = [
-		'plugin.Queue.QueuedTasks',
+		'plugin.Queue.QueuedJobs',
+		'plugin.Queue.QueueProcesses',
 	];
 
 	/**
@@ -31,9 +44,16 @@ class QueueShellTest extends TestCase {
 	public function setUp() {
 		parent::setUp();
 
-		$this->QueueShell = new TestQueueShell();
+		$this->out = new ConsoleOutput();
+		$this->err = new ConsoleOutput();
+		$io = new ConsoleIo($this->out, $this->err);
+
+		$this->QueueShell = $this->getMockBuilder(QueueShell::class)
+			->setMethods(['in', 'err', '_stop'])
+			->setConstructorArgs([$io])
+			->getMock();
+
 		$this->QueueShell->initialize();
-		$this->QueueShell->loadTasks();
 
 		Configure::write('Queue', [
 			'sleeptime' => 2,
@@ -43,120 +63,81 @@ class QueueShellTest extends TestCase {
 			'workermaxruntime' => 5,
 			'cleanuptimeout' => 10,
 			'exitwhennothingtodo' => false,
-			'pidfilepath' => TMP . 'queue' . DS,
+			'pidfilepath' => false, // TMP . 'queue' . DS,
 			'log' => false,
 		]);
 	}
 
 	/**
-	 * QueueShellTest::testObject()
-	 *
 	 * @return void
 	 */
 	public function testObject() {
 		$this->assertTrue(is_object($this->QueueShell));
-		$this->assertInstanceOf('Queue\Shell\QueueShell', $this->QueueShell);
+		$this->assertInstanceOf(QueueShell::class, $this->QueueShell);
 	}
 
 	/**
-	 * QueueShellTest::testStats()
-	 *
 	 * @return void
 	 */
 	public function testStats() {
-		$result = $this->QueueShell->stats();
-		//debug($this->QueueShell->out);
-		$this->assertTrue(in_array('Total unfinished Jobs      : 0', $this->QueueShell->out));
+		$this->_needsConnection();
+
+		$this->QueueShell->stats();
+		$this->assertContains('Total unfinished Jobs      : 0', $this->out->output());
 	}
 
 	/**
-	 * QueueShellTest::testSettings()
-	 *
 	 * @return void
 	 */
 	public function testSettings() {
-		$result = $this->QueueShell->settings();
-		$this->assertTrue(in_array('* cleanuptimeout: 10', $this->QueueShell->out));
+		$this->QueueShell->settings();
+		$this->assertContains('* cleanuptimeout: 10', $this->out->output());
 	}
 
 	/**
-	 * QueueShellTest::testAddInexistent()
-	 *
 	 * @return void
 	 */
 	public function testAddInexistent() {
-		$this->QueueShell->args[] = 'Foo';
-		$result = $this->QueueShell->add();
-		$this->assertTrue(in_array('Error: Task not Found: Foo', $this->QueueShell->out));
+		$this->QueueShell->args[] = 'FooBar';
+		$this->QueueShell->add();
+		$this->assertContains('Error: Task not found: FooBar', $this->out->output());
 	}
 
 	/**
-	 * QueueShellTest::testAdd()
-	 *
 	 * @return void
 	 */
 	public function testAdd() {
 		$this->QueueShell->args[] = 'Example';
-		$result = $this->QueueShell->add();
-		//debug($this->QueueShell->out);
+		$this->QueueShell->add();
 
-		$this->assertEmpty($this->QueueShell->out);
-
-		$result = $this->QueueShell->runworker();
-		//debug($this->QueueShell->out);
-		$this->assertTrue(in_array('Running Job of type "Example"', $this->QueueShell->out));
+		$this->assertContains('OK, job created, now run the worker', $this->out->output(), print_r($this->out->output, true));
 	}
 
 	/**
-	 * QueueShellTest::testRetry()
-	 *
 	 * @return void
 	 */
 	public function testRetry() {
-		$this->QueueShell->args[] = 'RetryExample';
-		$result = $this->QueueShell->add();
-		$this->assertEmpty($this->QueueShell->out);
+		$this->_needsConnection();
 
-		$result = $this->QueueShell->runworker();
-		//debug($this->QueueShell->out);
-		$this->assertTrue(in_array('Job did not finish, requeued.', $this->QueueShell->out));
+		$this->QueueShell->args[] = 'RetryExample';
+		$this->QueueShell->add();
+
+		$expected = 'This is a very simple example of a QueueTask and how retries work';
+		$this->assertContains($expected, $this->out->output());
+
+		$this->QueueShell->runworker();
+
+		$this->assertContains('Job did not finish, requeued after try 1.', $this->out->output());
 	}
 
-}
-
-class TestQueueShell extends QueueShell {
-
 	/**
-	 * @var array
-	 */
-	public $out = [];
-
-	/**
-	 * Output function for Test
-	 *
-	 * @param string|null $message Message.
-	 * @param int $newlines Newline.
-	 * @param int $level Output level.
+	 * Helper method for skipping tests that need a real connection.
 	 *
 	 * @return void
 	 */
-	public function out($message = null, $newlines = 1, $level = Shell::NORMAL) {
-		$this->out[] = $message;
-	}
-
-	/**
-	 * Get task configuration
-	 *
-	 * @return array
-	 */
-	protected function _getTaskConf() {
-		parent::_getTaskConf();
-		foreach ($this->_taskConf as &$conf) {
-			$conf['timeout'] = 5;
-			$conf['retries'] = 1;
-		}
-
-		return $this->_taskConf;
+	protected function _needsConnection() {
+		$config = ConnectionManager::config('test');
+		$this->skipIf(strpos($config['driver'], 'Mysql') === false, 'Only Mysql is working yet for this.');
 	}
 
 }

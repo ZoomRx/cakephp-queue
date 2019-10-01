@@ -2,9 +2,11 @@
 
 namespace Queue\Shell\Task;
 
+use Cake\Core\Configure;
 use Cake\Log\Log;
 use Cake\Mailer\Email;
 use Exception;
+use Throwable;
 
 /**
  * @author Mark Scherer
@@ -33,12 +35,7 @@ class QueueEmailTask extends QueueTask {
 	public $retries = 1;
 
 	/**
-	 * @var bool
-	 */
-	public $autoUnserialize = true;
-
-	/**
-	 * @var \Cake\Network\Email
+	 * @var \Cake\Mailer\Email
 	 */
 	public $Email;
 
@@ -58,21 +55,18 @@ class QueueEmailTask extends QueueTask {
 				'from' => 'system@example.com',
 				'template' => 'sometemplate',
 			],
-			'vars' => [
-				'content' => 'hello world',
-			],
+			'content' => 'hello world',
 		], true));
 		$this->out('Alternativly, you can pass the whole EmailLib to directly use it.');
 	}
 
 	/**
-	 * QueueEmailTask::run()
-	 *
-	 * @param mixed $data Job data
-	 * @param int|null $id The id of the QueuedTask
+	 * @param array $data The array passed to QueuedJobsTable::createJob()
+	 * @param int $jobId The id of the QueuedJob entity
 	 * @return bool Success
+	 * @throws \Exception
 	 */
-	public function run($data, $id = null) {
+	public function run(array $data, $jobId) {
 		if (!isset($data['settings'])) {
 			$this->err('Queue Email task called without settings data.');
 			return false;
@@ -82,8 +76,11 @@ class QueueEmailTask extends QueueTask {
 		$email = $data['settings'];
 		if (is_object($email) && $email instanceof Email) {
 			try {
-				$transportClassNames = $email->configuredTransport();
-				$result = $email->transport($transportClassNames[0])->send();
+				if (!empty($data['transport'])) {
+					$email->setTransport($data['transport']);
+				}
+				$content = isset($data['content']) ? $data['content'] : null;
+				$result = $email->send($content);
 
 				if (!isset($config['log']) || !empty($config['logTrace']) && $config['logTrace'] === true) {
 					$config['log'] = 'email_trace';
@@ -98,34 +95,67 @@ class QueueEmailTask extends QueueTask {
 					$this->_log($result, $config['log']);
 				}
 				return (bool)$result;
+			} catch (Throwable $e) {
+				$error = $e->getMessage();
+				$error .= ' (line ' . $e->getLine() . ' in ' . $e->getFile() . ')' . PHP_EOL . $e->getTraceAsString();
+				Log::write('error', $error);
 			} catch (Exception $e) {
 
 				$error = $e->getMessage();
 				$error .= ' (line ' . $e->getLine() . ' in ' . $e->getFile() . ')' . PHP_EOL . $e->getTraceAsString();
-				Log::write('email_error', $error);
-
-				return false;
+				Log::write('error', $error);
 			}
+
+			return false;
 		}
 
-		$class = 'Tools\Mailer\Email';
-		if (!class_exists($class)) {
-			$class = 'Cake\Mailer\Email';
-		}
-		$this->Email = new $class();
+		$this->Email = $this->_getMailer();
 
 		$settings = array_merge($this->defaults, $data['settings']);
 		foreach ($settings as $method => $setting) {
 			call_user_func_array([$this->Email, $method], (array)$setting);
 		}
 		$message = null;
+		if (isset($data['content'])) {
+			$message = $data['content'];
+		}
 		if (!empty($data['vars'])) {
-			if (isset($data['vars']['content'])) {
+			// @deprecated BC only, use $data['content'] instead.
+			if ($message === null && isset($data['vars']['content'])) {
 				$message = $data['vars']['content'];
 			}
-			$this->Email->viewVars($data['vars']);
+
+			$this->Email->setViewVars($data['vars']);
 		}
-		return $this->Email->send($message);
+		if (!empty($data['headers'])) {
+			if (!is_array($data['headers'])) {
+				throw new Exception('please provide headers as array');
+			}
+			$this->Email->setHeaders($data['headers']);
+		}
+
+		return (bool)$this->Email->send($message);
+	}
+
+	/**
+	 * Check if Mail class exists and create instance
+	 *
+	 * @return \Cake\Mailer\Email
+	 * @throws \Exception
+	 */
+	protected function _getMailer() {
+		$class = Configure::read('Queue.mailerClass');
+		if (!$class) {
+			$class = 'Tools\Mailer\Email';
+			if (!class_exists($class)) {
+				$class = 'Cake\Mailer\Email';
+			}
+		}
+		if (!class_exists($class)) {
+			throw new Exception(sprintf('Configured mailer class `%s` in `%s` not found.', $class, get_class($this)));
+		}
+
+		return new $class();
 	}
 
 	/**
@@ -146,7 +176,7 @@ class QueueEmailTask extends QueueTask {
 			}
 			$config = array_merge($config, $log);
 		}
-		/** for now
+		/* for now
 		Log::write(
 			$config['level'],
 			PHP_EOL . $contents['headers'] . PHP_EOL . $contents['message'],
