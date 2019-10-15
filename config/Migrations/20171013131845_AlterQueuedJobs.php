@@ -19,6 +19,8 @@ class AlterQueuedJobs extends AbstractMigration {
 	public function change() {
 		$table = $this->table('queued_jobs');
 
+		$table->renameColumn('message', 'failure_message');
+
 		try {
 			$adapter = new MysqlAdapter([]);
 			if ($adapter->getSqlType('text', 'mediumtext')) {
