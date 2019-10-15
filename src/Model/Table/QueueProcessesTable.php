@@ -95,7 +95,6 @@ class QueueProcessesTable extends Table {
 			$queueProcess['reference'] = $zrxReference;
 		}
 
-		\Cake\Log\Log::debug($queueProcess);
 		$this->saveOrFail($queueProcess);
 
 		return $queueProcess->id;
@@ -118,7 +117,6 @@ class QueueProcessesTable extends Table {
 	 * @return void
 	 */
 	public function remove($pid) {
-		\Cake\Log\Log::debug("removing " . $pid);
 		$this->deleteAll(['pid' => $pid]);
 	}
 
