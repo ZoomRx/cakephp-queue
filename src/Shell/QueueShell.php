@@ -2,7 +2,7 @@
 
 namespace Queue\Shell;
 
-use App\Log\Zlog;
+use App\Log\ZLog;
 use Cake\Console\Shell;
 use Cake\Core\Configure;
 use Cake\Datasource\Exception\RecordNotFoundException;
@@ -230,7 +230,7 @@ TEXT;
 	 * @return void
 	 */
 	protected function _logError($message, $data = null) {
-		if (class_exists('Zlog')) {
+		if (class_exists('App\Log\ZLog')) {
 			ZLog::error("Error in cakephp queue - " . $message, ZLog::ADMIN, ZLog::HIGH, [], ['queue_task_data' => $data]);
 
 			return;
